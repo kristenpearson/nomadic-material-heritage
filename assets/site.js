@@ -3,7 +3,8 @@
    the filters and the item view. Filters and the open item live in the web
    address, so any view can be shared. */
 
-const PER_PAGE = 24;
+const PER_PAGE = 24;          // items added each time the grid grows
+const AUTO_BATCHES = 5;       // grow by itself this many times, then ask
 const FEATURED_UID = "2021SG06-C04-1293";   // Unique ID of the home page photo
 
 const CATEGORY_COLOURS = {
@@ -70,6 +71,7 @@ const STRINGS = {
     page: "Page {n}", next_page: "Next →", prev_page: "← Previous",
     // what you are looking at, shown above the grid, and the empty state
     everything: "Show everything", only: "Show only {x}", remove: "Remove {x}",
+    more: "Show more",
     none_craft_place: "No {craft} from {place} yet.",
     none_for: "Nothing here for {what} yet.",
     not_ready: "This language is not ready yet, so the page is still in English. " +
@@ -104,6 +106,7 @@ const STRINGS = {
     mt_notice: "Бұл беттің бір бөлігі автомат түрде аударылған және әлі тексерілуде. Түзетулерді қуана қабылдаймыз.",
     // machine translation, not yet reviewed
     everything: "Барлығын көрсету", only: "Тек {x} көрсету", remove: "{x} алып тастау",
+    more: "Тағы көрсету",
     none_craft_place: "{place} жерінен {craft} әзірге жоқ.",
     none_for: "{what} бойынша әзірге ештеңе жоқ.",
   },
@@ -136,6 +139,7 @@ const STRINGS = {
     mt_notice: "Энэ хуудсын зарим хэсгийг машин орчуулгаар хөрвүүлсэн бөгөөд хянагдаж байна. Залруулгыг талархан хүлээн авна.",
     // machine translation, not yet reviewed
     everything: "Бүгдийг харуулах", only: "Зөвхөн {x} харуулах", remove: "{x} хасах",
+    more: "Цааш харуулах",
     none_craft_place: "{place}-аас {craft} одоогоор алга.",
     none_for: "{what} гэсэн зүйл одоогоор алга.",
   },
@@ -185,6 +189,7 @@ async function start() {
     b.addEventListener("click", () => setLanguage(b.dataset.lang)));
   $("reset").addEventListener("click", clearFilters);
   setUpClearers();
+  setUpGrowing();
   $("close").addEventListener("click", closeItem);
   $("prev").addEventListener("click", () => step(-1));
   $("next").addEventListener("click", () => step(1));
@@ -484,6 +489,10 @@ function setUpClearers() {
     .empty-choices button { font: inherit; line-height: 1.2; cursor: pointer; padding: .3em .8em;
       border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; }
     .empty-choices button:hover { background: rgba(0,0,0,.06); }
+    #pager .more { font: inherit; font-size: 1.05em; cursor: pointer; padding: .7em 1.6em; margin: 1rem auto;
+      display: block; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; }
+    #pager .more:hover { background: rgba(0,0,0,.06); }
+    #more-sentinel { height: 1px; }
   `;
   document.head.appendChild(css);
 }
@@ -550,6 +559,7 @@ function apply(push) {
 
   const pages = Math.max(1, Math.ceil(state.filtered.length / PER_PAGE));
   if (state.page > pages) state.page = pages;
+  autoLoads = 0;
 
   document.querySelectorAll(".chip").forEach((b) => {
     const v = b.dataset.craft;
@@ -560,59 +570,23 @@ function apply(push) {
   $("count").textContent = n === 1 ? t("showing_one") : t("showing", { n });
   drawClearers();
   $("hero").hidden = state.crafts.size > 0 || !!state.q || !!state.sum || !!state.place ||
-    !!state.maker || !!state.photographer || state.page > 1;
+    !!state.maker || !!state.photographer;
 
   drawGrid();
-  drawPager(pages);
+  drawMore();
   writeAddress(push);
   if (state.open) showItem(state.open, false); else closeItem(false);
 }
 
+/* state.page is how many batches of PER_PAGE are showing. The grid grows as
+   the visitor scrolls, so there are no page links to find. */
 function drawGrid() {
   const grid = $("grid");
   grid.innerHTML = "";
-  const slice = state.filtered.slice((state.page - 1) * PER_PAGE, state.page * PER_PAGE);
+  const slice = state.filtered.slice(0, state.page * PER_PAGE);
   $("empty").hidden = slice.length > 0;
   if (!slice.length) drawEmpty();
-
-  slice.forEach((item) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "card";
-    const frame = document.createElement("div");
-    frame.className = "frame";
-    if (item.grid) {
-      const img = document.createElement("img");
-      img.src = item.grid;
-      img.alt = text(item, "title");
-      img.loading = "lazy";
-      img.decoding = "async";
-      frame.appendChild(img);
-    } else {
-      const p = document.createElement("p");
-      p.className = "missing";
-      p.textContent = text(item, "title");
-      frame.appendChild(p);
-    }
-    if (item.type === "video") {
-      const badge = document.createElement("span");
-      badge.className = "play";
-      badge.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="#171A2B"/></svg>';
-      frame.appendChild(badge);
-    }
-    const title = document.createElement("span");
-    title.className = "title";
-    title.textContent = text(item, "title");
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    const by = item.type === "video" ? t("video_by") : t("photo_by");
-    const where = item.place ? (placeName(item.place) || sumName(item.place)) : "";
-    meta.textContent = [where, catLabel(item.categories[0] || ""), item.credit && `${by}: ${item.credit}`]
-      .filter(Boolean).join(" · ");
-    card.append(frame, title, meta);
-    card.addEventListener("click", () => showItem(item.uid, true));
-    grid.appendChild(card);
-  });
+  slice.forEach((item) => grid.appendChild(card(item)));
 
   if (!$("hero").hidden) {
     const featured = state.items.find((i) => i.uid === FEATURED_UID) ||
@@ -636,33 +610,97 @@ function drawGrid() {
   }
 }
 
-function drawPager(pages) {
+function card(item) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "card";
+  card.dataset.uid = item.uid;
+  const frame = document.createElement("div");
+  frame.className = "frame";
+  if (item.grid) {
+    const img = document.createElement("img");
+    img.src = item.grid;
+    img.alt = text(item, "title");
+    img.loading = "lazy";
+    img.decoding = "async";
+    frame.appendChild(img);
+  } else {
+    const p = document.createElement("p");
+    p.className = "missing";
+    p.textContent = text(item, "title");
+    frame.appendChild(p);
+  }
+  if (item.type === "video") {
+    const badge = document.createElement("span");
+    badge.className = "play";
+    badge.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="#171A2B"/></svg>';
+    frame.appendChild(badge);
+  }
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = text(item, "title");
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  const by = item.type === "video" ? t("video_by") : t("photo_by");
+  const where = item.place ? (placeName(item.place) || sumName(item.place)) : "";
+  meta.textContent = [where, catLabel(item.categories[0] || ""), item.credit && `${by}: ${item.credit}`]
+    .filter(Boolean).join(" · ");
+  card.append(frame, title, meta);
+  card.addEventListener("click", () => showItem(item.uid, true));
+  return card;
+}
+
+/* ---------------------------------------------------------------- growing grid */
+let autoLoads = 0;
+
+function setUpGrowing() {
+  const grid = $("grid");
+  const sentinel = document.createElement("div");
+  sentinel.id = "more-sentinel";
+  sentinel.setAttribute("aria-hidden", "true");
+  grid.insertAdjacentElement("afterend", sentinel);
+  // the old page links live in #pager; it now holds only the "Show more" button
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      if (autoLoads >= AUTO_BATCHES) return;
+      if (grow()) autoLoads += 1;
+    }, { rootMargin: "1200px 0px" }).observe(sentinel);
+  }
+}
+
+/* add the next batch of cards without redrawing the ones already there */
+function grow() {
+  const shown = state.page * PER_PAGE;
+  if (shown >= state.filtered.length) return false;
+  state.page += 1;
+  const grid = $("grid");
+  state.filtered.slice(shown, state.page * PER_PAGE).forEach((item) => grid.appendChild(card(item)));
+  drawMore();
+  writeAddress(false);
+  return true;
+}
+
+/* make sure the card for this item is on the page, growing as needed */
+function growTo(uid) {
+  const index = state.filtered.findIndex((i) => i.uid === uid);
+  if (index < 0) return;
+  while (index >= state.page * PER_PAGE && grow()) { /* keep growing */ }
+}
+
+function drawMore() {
   const pager = $("pager");
   pager.innerHTML = "";
-  if (pages < 2) return;
-  const go = (n) => { state.page = n; apply(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
-  const button = (label, n, current) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = label;
-    if (current) b.setAttribute("aria-current", "page");
-    b.addEventListener("click", () => go(n));
-    return b;
-  };
-  const dots = () => {
-    const s = document.createElement("span");
-    s.className = "dots"; s.textContent = "…";
-    return s;
-  };
-  if (state.page > 1) pager.appendChild(button(t("prev_page"), state.page - 1));
-  const near = new Set([1, pages, state.page, state.page - 1, state.page + 1]);
-  let last = 0;
-  [...near].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b).forEach((n) => {
-    if (n - last > 1) pager.appendChild(dots());
-    pager.appendChild(button(String(n), n, n === state.page));
-    last = n;
-  });
-  if (state.page < pages) pager.appendChild(button(t("next_page"), state.page + 1));
+  const left = state.filtered.length - state.page * PER_PAGE;
+  if (left <= 0) return;
+  // after a few automatic loads, ask; the footer stays reachable
+  if (autoLoads < AUTO_BATCHES && "IntersectionObserver" in window) return;
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "more";
+  b.textContent = t("more");
+  b.addEventListener("click", grow);
+  pager.appendChild(b);
 }
 
 /* ---------------------------------------------------------------- item view */
@@ -735,10 +773,26 @@ function showItem(uid, push) {
     ? t("of", { n: index + 1, m: state.filtered.length }) : "";
   $("prev").hidden = $("next").hidden = index < 0;
 
+  if ($("overlay").hidden) lockPage();
   $("overlay").hidden = false;
-  document.body.style.overflow = "hidden";
   $("close").focus();
   writeAddress(push);
+}
+
+/* Freeze the page behind the item view without losing the scroll position
+   (setting overflow: hidden alone makes some phones jump to the top). */
+let lockedAt = 0;
+function lockPage() {
+  lockedAt = window.scrollY;
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${lockedAt}px`;
+  document.body.style.width = "100%";
+}
+function unlockPage() {
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.width = "";
+  window.scrollTo(0, lockedAt);
 }
 
 function step(delta) {
@@ -753,8 +807,20 @@ function closeItem(push) {
   if (overlay.hidden) return;
   overlay.hidden = true;
   [...$("stage").querySelectorAll("img, video, iframe, .fallback")].forEach((el) => el.remove());
-  document.body.style.overflow = "";
+  const last = state.open;
+  unlockPage();
   if (push !== false) { state.open = null; writeAddress(true); }
+  // after stepping through items, land on the one just looked at
+  if (last) {
+    growTo(last);
+    const el = document.querySelector(`.card[data-uid="${CSS.escape(last)}"]`);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const visible = r.top >= 0 && r.bottom <= window.innerHeight;
+      if (!visible) el.scrollIntoView({ block: "center" });
+      el.focus({ preventScroll: true });
+    }
+  }
 }
 
 function onKey(e) {
