@@ -184,8 +184,7 @@ async function start() {
   document.querySelectorAll("[data-lang]").forEach((b) =>
     b.addEventListener("click", () => setLanguage(b.dataset.lang)));
   $("reset").addEventListener("click", clearFilters);
-  $("reset").hidden = true;   // replaced by the tokens next to the item count
-  setUpTokens();
+  setUpClearers();
   $("close").addEventListener("click", closeItem);
   $("prev").addEventListener("click", () => step(-1));
   $("next").addEventListener("click", () => step(1));
@@ -210,7 +209,7 @@ function chip(label, value, colours) {
   const b = document.createElement("button");
   b.type = "button";
   b.className = "chip" + (!value ? " util" : UTILITY_BUTTONS.includes(value) ? " kind" : "");
-  b.textContent = label;
+  b.innerHTML = escape(label) + (value ? '<span class="x" aria-hidden="true">\u00d7</span>' : "");
   b.dataset.craft = value;
   if (colours) {
     b.style.setProperty("--chip", colours[0]);
@@ -457,51 +456,48 @@ function keepOnly(facet) {
   syncControls();
 }
 
-function setUpTokens() {
-  if ($("tokens")) return;
-  const row = document.createElement("div");
-  row.id = "tokens";
-  row.className = "tokens";
-  $("count").insertAdjacentElement("afterend", row);
+function setUpClearers() {
+  // a small × beside each dropdown, shown only while something is chosen
+  [["sum", () => { state.sum = ""; state.place = ""; }],
+   ["place", () => { state.place = ""; }],
+   ["maker", () => { state.maker = ""; }],
+   ["photographer", () => { state.photographer = ""; }]].forEach(([id, clear]) => {
+    const select = $(id);
+    if (select.nextElementSibling && select.nextElementSibling.classList.contains("unpick")) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "unpick";
+    b.dataset.for = id;
+    b.hidden = true;
+    b.innerHTML = '<span aria-hidden="true">\u00d7</span>';
+    b.addEventListener("click", () => { clear(); syncControls(); });
+    select.insertAdjacentElement("afterend", b);
+  });
   const css = document.createElement("style");
   css.textContent = `
-    .tokens { display: inline-flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-left: .75rem; }
-    .tokens:empty { display: none; }
-    .token, .tokens .everything, .empty-choices button {
-      font: inherit; font-size: .9em; line-height: 1.2; border-radius: 999px; cursor: pointer;
-      padding: .3em .8em; border: 1px solid currentColor; background: transparent; color: inherit; }
-    .token { padding-right: .55em; }
-    .token .x { margin-left: .45em; font-weight: 600; }
-    .token:hover, .tokens .everything:hover, .empty-choices button:hover { background: rgba(0,0,0,.06); }
-    .tokens .everything { border-style: dashed; }
+    .chip .x { display: none; margin-left: .45em; font-weight: 600; }
+    .chip[aria-pressed="true"] .x { display: inline; }
+    .unpick { font: inherit; line-height: 1; cursor: pointer; margin-left: .25rem; padding: .25em .55em;
+      border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; }
+    .unpick:hover { background: rgba(0,0,0,.06); }
     .empty-choices { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: .75rem; }
-    .empty-choices button { font-size: 1em; }
+    .empty-choices button { font: inherit; line-height: 1.2; cursor: pointer; padding: .3em .8em;
+      border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; }
+    .empty-choices button:hover { background: rgba(0,0,0,.06); }
   `;
   document.head.appendChild(css);
 }
 
-function drawTokens() {
-  const row = $("tokens");
-  if (!row) return;
-  row.innerHTML = "";
-  const facets = activeFacets();
-  facets.forEach((f) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "token";
-    b.setAttribute("aria-label", t("remove", { x: f.label }));
-    b.innerHTML = escape(f.label) + '<span class="x" aria-hidden="true">\u00d7</span>';
-    b.addEventListener("click", () => { f.clear(); syncControls(); });
-    row.appendChild(b);
+function drawClearers() {
+  document.querySelectorAll(".unpick").forEach((b) => {
+    const select = $(b.dataset.for);
+    b.hidden = !select.value || select.hidden || select.disabled;
+    b.setAttribute("aria-label", t("remove", { x: select.options[select.selectedIndex]
+      ? select.options[select.selectedIndex].textContent : "" }));
   });
-  if (facets.length > 1) {
-    const all = document.createElement("button");
-    all.type = "button";
-    all.className = "everything";
-    all.textContent = t("everything");
-    all.addEventListener("click", clearFilters);
-    row.appendChild(all);
-  }
+  const reset = $("reset");
+  reset.textContent = t("everything");
+  reset.hidden = activeFacets().length === 0;
 }
 
 /* When nothing matches: say what was asked for, in plain words, and offer
@@ -562,7 +558,7 @@ function apply(push) {
 
   const n = state.filtered.length;
   $("count").textContent = n === 1 ? t("showing_one") : t("showing", { n });
-  drawTokens();
+  drawClearers();
   $("hero").hidden = state.crafts.size > 0 || !!state.q || !!state.sum || !!state.place ||
     !!state.maker || !!state.photographer || state.page > 1;
 
