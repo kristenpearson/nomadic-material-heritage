@@ -664,7 +664,8 @@ function setUpGrowing() {
     new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       if (autoLoads >= AUTO_BATCHES) return;
-      if (grow()) autoLoads += 1;
+      autoLoads += 1;   // counted before drawing, so the fifth batch can show the button
+      grow();
     }, { rootMargin: "1200px 0px" }).observe(sentinel);
   }
 }
