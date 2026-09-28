@@ -68,6 +68,10 @@ const STRINGS = {
       "Corrections are welcome.", no_preview:
       "This item has no preview in the repository. Open it there to see the original.",
     page: "Page {n}", next_page: "Next →", prev_page: "← Previous",
+    // what you are looking at, shown above the grid, and the empty state
+    everything: "Show everything", only: "Show only {x}", remove: "Remove {x}",
+    none_craft_place: "No {craft} from {place} yet.",
+    none_for: "Nothing here for {what} yet.",
     not_ready: "This language is not ready yet, so the page is still in English. " +
       "Item titles appear in the language the repository recorded them in.",
   },
@@ -98,6 +102,10 @@ const STRINGS = {
     hero_blurb: "Баян-Өлгийдегі қазақ және урианхай шеберлері жасаған сырмақ, тұс киіз, терме және тері бұйымдарын құжаттаған суреттер, бейнелер мен сұхбаттар.",
     footer: "Материал Британ мұражайының Endangered Material Knowledge Programme бағдарламасынан алынған, Creative Commons BY-NC-SA 4.0 лицензиясымен. Әр бұйым түсірушісін көрсетеді және қоймадағы жазбасына сілтейді.",
     mt_notice: "Бұл беттің бір бөлігі автомат түрде аударылған және әлі тексерілуде. Түзетулерді қуана қабылдаймыз.",
+    // machine translation, not yet reviewed
+    everything: "Барлығын көрсету", only: "Тек {x} көрсету", remove: "{x} алып тастау",
+    none_craft_place: "{place} жерінен {craft} әзірге жоқ.",
+    none_for: "{what} бойынша әзірге ештеңе жоқ.",
   },
   // Mongolian: machine translation, partly corrected by Marima Khaumyen (September 2026)
   mn: {
@@ -126,6 +134,10 @@ const STRINGS = {
     hero_blurb: "Баян-Өлгий аймгийн казах болон урианхай урлаачдын хийсэн сырмак, тус кииз, терме, арьс ширэн эдлэлийг баримтжуулсан гэрэл зураг, бичлэг, ярилцлага.",
     footer: "Материал Британийн музейн Endangered Material Knowledge Programme-аас авсан бөгөөд Creative Commons BY-NC-SA 4.0 лицензтэй. Бүтээл бүр гэрэл зурагчнаа заасан бөгөөд архив дахь бүртгэл рүү холбогдоно.",
     mt_notice: "Энэ хуудсын зарим хэсгийг машин орчуулгаар хөрвүүлсэн бөгөөд хянагдаж байна. Залруулгыг талархан хүлээн авна.",
+    // machine translation, not yet reviewed
+    everything: "Бүгдийг харуулах", only: "Зөвхөн {x} харуулах", remove: "{x} хасах",
+    none_craft_place: "{place}-аас {craft} одоогоор алга.",
+    none_for: "{what} гэсэн зүйл одоогоор алга.",
   },
 };
 
@@ -172,6 +184,8 @@ async function start() {
   document.querySelectorAll("[data-lang]").forEach((b) =>
     b.addEventListener("click", () => setLanguage(b.dataset.lang)));
   $("reset").addEventListener("click", clearFilters);
+  $("reset").hidden = true;   // replaced by the tokens next to the item count
+  setUpTokens();
   $("close").addEventListener("click", closeItem);
   $("prev").addEventListener("click", () => step(-1));
   $("next").addEventListener("click", () => step(1));
@@ -388,6 +402,145 @@ function matches(item, needles) {
   return needles.every((w) => hay.includes(w));
 }
 
+/* ---------------------------------------------------------------- what you are looking at */
+/* Everything currently narrowing the grid, as a list of things the visitor
+   chose, each with a way to undo just that one. */
+function activeFacets() {
+  const f = [];
+  if (state.crafts.size) {
+    const crafts = [...state.crafts];
+    f.push({
+      kind: "craft",
+      label: crafts.map(catLabel).join(", "),
+      clear: () => state.crafts.clear(),
+    });
+  }
+  if (state.place) {
+    const p = state.places && state.places.get(state.place);
+    f.push({
+      kind: "place",
+      label: p ? (placeName(p) || sumName(p)) : state.place,
+      clear: () => { state.place = ""; },
+    });
+  } else if (state.sum) {
+    const p = [...(state.places ? state.places.values() : [])]
+      .find((x) => x.sum_key === state.sum) ||
+      (state.items.find((i) => i.place && i.place.sum_key === state.sum) || {}).place;
+    f.push({
+      kind: "place",
+      label: p ? sumName(p) : state.sum,
+      clear: () => { state.sum = ""; state.place = ""; },
+    });
+  }
+  if (state.maker) f.push({ kind: "maker", label: state.maker, clear: () => { state.maker = ""; } });
+  if (state.photographer) {
+    f.push({ kind: "photographer", label: state.photographer,
+      clear: () => { state.photographer = ""; } });
+  }
+  if (state.q) f.push({ kind: "q", label: "\u201c" + state.q + "\u201d", clear: () => { state.q = ""; } });
+  return f;
+}
+
+/* Put the dropdowns and search box back in step with the state, then redraw. */
+function syncControls() {
+  $("q").value = state.q;
+  $("sum").value = state.sum;
+  $("maker").value = state.maker;
+  $("photographer").value = state.photographer;
+  fillPlaces();
+  state.page = 1;
+  apply(true);
+}
+
+function keepOnly(facet) {
+  activeFacets().forEach((f) => { if (f !== facet) f.clear(); });
+  syncControls();
+}
+
+function setUpTokens() {
+  if ($("tokens")) return;
+  const row = document.createElement("div");
+  row.id = "tokens";
+  row.className = "tokens";
+  $("count").insertAdjacentElement("afterend", row);
+  const css = document.createElement("style");
+  css.textContent = `
+    .tokens { display: inline-flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-left: .75rem; }
+    .tokens:empty { display: none; }
+    .token, .tokens .everything, .empty-choices button {
+      font: inherit; font-size: .9em; line-height: 1.2; border-radius: 999px; cursor: pointer;
+      padding: .3em .8em; border: 1px solid currentColor; background: transparent; color: inherit; }
+    .token { padding-right: .55em; }
+    .token .x { margin-left: .45em; font-weight: 600; }
+    .token:hover, .tokens .everything:hover, .empty-choices button:hover { background: rgba(0,0,0,.06); }
+    .tokens .everything { border-style: dashed; }
+    .empty-choices { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: .75rem; }
+    .empty-choices button { font-size: 1em; }
+  `;
+  document.head.appendChild(css);
+}
+
+function drawTokens() {
+  const row = $("tokens");
+  if (!row) return;
+  row.innerHTML = "";
+  const facets = activeFacets();
+  facets.forEach((f) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "token";
+    b.setAttribute("aria-label", t("remove", { x: f.label }));
+    b.innerHTML = escape(f.label) + '<span class="x" aria-hidden="true">\u00d7</span>';
+    b.addEventListener("click", () => { f.clear(); syncControls(); });
+    row.appendChild(b);
+  });
+  if (facets.length > 1) {
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "everything";
+    all.textContent = t("everything");
+    all.addEventListener("click", clearFilters);
+    row.appendChild(all);
+  }
+}
+
+/* When nothing matches: say what was asked for, in plain words, and offer
+   the ways out as choices rather than asking anyone to "clear filters". */
+function drawEmpty() {
+  const box = $("empty");
+  const facets = activeFacets();
+  box.innerHTML = "";
+  const p = document.createElement("p");
+  const craft = facets.find((f) => f.kind === "craft");
+  const place = facets.find((f) => f.kind === "place");
+  if (facets.length === 2 && craft && place) {
+    p.textContent = t("none_craft_place", { craft: craft.label, place: place.label });
+  } else if (facets.length) {
+    p.textContent = t("none_for", { what: facets.map((f) => f.label).join(" \u00b7 ") });
+  } else {
+    p.textContent = t("no_items");
+  }
+  box.appendChild(p);
+  if (!facets.length) return;
+  const choices = document.createElement("div");
+  choices.className = "empty-choices";
+  if (facets.length > 1) {
+    facets.forEach((f) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = t("only", { x: f.label });
+      b.addEventListener("click", () => keepOnly(f));
+      choices.appendChild(b);
+    });
+  }
+  const all = document.createElement("button");
+  all.type = "button";
+  all.textContent = t("everything");
+  all.addEventListener("click", clearFilters);
+  choices.appendChild(all);
+  box.appendChild(choices);
+}
+
 /* ---------------------------------------------------------------- render */
 function apply(push) {
   const needles = searchWords(state.q);
@@ -409,6 +562,7 @@ function apply(push) {
 
   const n = state.filtered.length;
   $("count").textContent = n === 1 ? t("showing_one") : t("showing", { n });
+  drawTokens();
   $("hero").hidden = state.crafts.size > 0 || !!state.q || !!state.sum || !!state.place ||
     !!state.maker || !!state.photographer || state.page > 1;
 
@@ -423,6 +577,7 @@ function drawGrid() {
   grid.innerHTML = "";
   const slice = state.filtered.slice((state.page - 1) * PER_PAGE, state.page * PER_PAGE);
   $("empty").hidden = slice.length > 0;
+  if (!slice.length) drawEmpty();
 
   slice.forEach((item) => {
     const card = document.createElement("button");
